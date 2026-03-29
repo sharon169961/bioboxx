@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CORAL SENTINEL // BIOBOX DIGITAL TWIN</title>
+<script src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@300;500;700&display=swap');
+
+:root {
+  --cyan:    #00f2ff;
+  --danger:  #ff2244;
+  --warn:    #ffaa00;
+  --healthy: #00ff9d;
+  --text:    #ddf4ff;
+  --dim:     rgba(200,240,255,0.72);
+  --mono:    'Share Tech Mono', monospace;
+  --ui:      'Rajdhani', sans-serif;
+  --pw:      300px;   /* panel width */
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width:100vw; height:100vh; overflow:hidden; background:#00030c; color:var(--text); font-family:var(--ui); cursor:crosshair; }
+
+/* ── Overlays ──────────────────────────────────────────────────── */
+#scanlines {
+  position:fixed; inset:0; z-index:900; pointer-events:none;
+  background: repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,.06) 3px,rgba(0,0,0,.06) 4px);
+}
+#vignette {
+  position:fixed; inset:0; z-index:901; pointer-events:none;
+  background: radial-gradient(ellipse at 50% 40%,transparent 55%,rgba(0,0,0,.55) 100%);
+}
+
+/* ── Canvas layers ─────────────────────────────────────────────── */
+#ocean-bg     { position:fixed; inset:0; z-index:0; display:block; }
+#threejs-wrap { position:fixed; inset:0; z-index:1; }
+
+/* ── HEADER ────────────────────────────────────────────────────── */
+#hdr {
+  position:fixed; top:0; left:0; right:0; height:68px; z-index:50;
+  display:flex; align-items:center; justify-content:space-between; padding:0 28px;
+  background:linear-gradient(180deg,rgba(0,3,10,.97) 0%,rgba(0,3,10,.72) 100%);
+  border-bottom:1px solid rgba(0,242,255,.18); backdrop-filter:blur(14px);
+}
+.brand { font-family:var(--mono); font-size:13px; letter-spacing:3px; color:var(--cyan); text-shadow:0 0 12px var(--cyan); }
+.brand em { color:rgba(0,242,255,.38); font-style:normal; }
+.geo   { font-family:var(--mono); font-size:9px; letter-spacing:1.5px; color:var(--dim); margin-top:5px; }
+
+.hcluster { display:flex; align-items:center; gap:24px; }
+.hstat { font-family:var(--mono); font-size:9px; letter-spacing:1.5px; color:var(--dim); line-height:1.9; text-align:right; }
+.hstat strong { color:var(--cyan); font-size:14px; display:block; }
+
+#hbwrap { display:flex; align-items:center; gap:8px; }
+#hblbl  { font-family:var(--mono); font-size:9px; color:var(--dim); letter-spacing:1px; text-align:right; }
+#hbcv   { width:120px; height:32px; border:1px solid rgba(0,242,255,.14); background:rgba(0,242,255,.02); }
+
+.dot { width:7px; height:7px; border-radius:50%; background:var(--healthy); box-shadow:0 0 8px var(--healthy); animation:blink 1.4s ease-in-out infinite; flex-shrink:0; }
+.dot.off { background:var(--danger); box-shadow:0 0 8px var(--danger); animation:none; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.25} }
+.connrow { display:flex; align-items:center; gap:7px; font-family:var(--mono); font-size:9px; color:var(--dim); letter-spacing:1.5px; }
+
+/* ── BOTTOM STRIP ──────────────────────────────────────────────── */
+#btm {
+  position:fixed; bottom:0; left:0; right:0; height:108px; z-index:50;
+  display:flex; align-items:center; gap:14px; padding:0 28px;
+  background:linear-gradient(0deg,rgba(0,3,10,.97) 0%,rgba(0,3,10,.62) 100%);
+  border-top:1px solid rgba(0,242,255,.12); backdrop-filter:blur(14px);
+}
+.pill {
+  display:flex; flex-direction:column; align-items:center;
+  padding:9px 18px; min-width:128px; flex-shrink:0;
+  border:1px solid rgba(0,242,255,.18); background:rgba(0,242,255,.04);
+  border-radius:3px; position:relative; overflow:hidden;
+  transition:border-color .4s,background .4s;
+}
+.pill::after {
+  content:''; position:absolute; top:0; left:0; right:0; height:1px;
+  background:linear-gradient(90deg,transparent,var(--cyan),transparent);
+  opacity:0; transition:opacity .3s;
+}
+.pill.active::after { opacity:1; }
+.pill.warn   { border-color:rgba(255,170,0,.35);  background:rgba(255,170,0,.05); }
+.pill.warn::after   { background:linear-gradient(90deg,transparent,var(--warn),transparent); opacity:1; }
+.pill.danger { border-color:rgba(255,34,68,.38); background:rgba(255,34,68,.06); }
+.pill.danger::after { background:linear-gradient(90deg,transparent,var(--danger),transparent); opacity:1; }
+.pill-id { font-family:var(--mono); font-size:8px; color:var(--dim); letter-spacing:2px; }
+.pill-ph { font-family:var(--mono); font-size:22px; color:var(--cyan); transition:color .4s; line-height:1.2; }
+.pill-ph.warn   { color:var(--warn); }
+.pill-ph.danger { color:var(--danger); }
+.pill-st { font-family:var(--mono); font-size:8px; color:var(--dim); letter-spacing:1px; margin-top:1px; }
+.pill-bar { width:100%; height:2px; margin-top:7px; background:rgba(255,255,255,.06); border-radius:1px; overflow:hidden; }
+.pill-fill { height:100%; transition:width .5s,background .5s; }
+
+#logbox {
+  flex:1; overflow:hidden; padding-left:18px;
+  border-left:1px solid rgba(0,242,255,.08);
+  font-family:var(--mono); font-size:9px; line-height:2.1; color:var(--dim);
+}
+.lline { animation:fadeIn .3s ease forwards; }
+.lline.alert { color:var(--danger); }
+@keyframes fadeIn { from{opacity:0;transform:translateX(-5px)} to{opacity:1;transform:none} }
+
+/* ── TELEMETRY TAB ─────────────────────────────────────────────── */
+#tel-tab {
+  position:fixed; right:0; top:50%; z-index:60;
+  transform:translateY(-50%);
+  transition:right .38s cubic-bezier(.16,1,.3,1);
+  pointer-events:auto; cursor:pointer;
+}
+#tel-tab.open { right:var(--pw); }
+#tel-btn {
+  display:flex; align-items:center; justify-content:center;
+  width:22px; height:80px;
+  background:rgba(0,10,26,.96); border:1px solid rgba(0,242,255,.22); border-right:none;
+  border-radius:4px 0 0 4px; font-family:var(--mono); font-size:8px; letter-spacing:2.5px;
+  color:var(--cyan); writing-mode:vertical-rl; box-shadow:-4px 0 18px rgba(0,0,0,.6);
+  transition:background .2s; user-select:none;
+}
+#tel-btn:hover { background:rgba(0,242,255,.1); }
+
+/* ── TELEMETRY PANEL ───────────────────────────────────────────── */
+#tel-panel {
+  position:fixed; top:68px; right:0; width:var(--pw);
+  height:calc(100vh - 68px - 108px); z-index:55;
+  background:linear-gradient(150deg,rgba(0,6,18,.98) 0%,rgba(0,12,30,.96) 100%);
+  border-left:1px solid rgba(0,242,255,.2);
+  display:flex; flex-direction:column;
+  transform:translateX(100%);
+  transition:transform .38s cubic-bezier(.16,1,.3,1);
+  backdrop-filter:blur(20px); box-shadow:-10px 0 50px rgba(0,0,0,.7);
+  overflow:hidden; pointer-events:auto;
+}
+#tel-panel.open { transform:translateX(0); }
+
+#tel-inner {
+  flex:1; overflow-y:auto; overflow-x:hidden;
+  padding:16px 18px 18px;
+  display:flex; flex-direction:column; gap:11px;
+  scrollbar-width:thin; scrollbar-color:rgba(0,242,255,.18) transparent;
+}
+#tel-hdr { display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid rgba(0,242,255,.15); padding-bottom:10px; }
+#tel-title { font-family:var(--mono); font-size:9px; letter-spacing:3px; color:var(--cyan); }
+#tel-nid   { font-family:var(--mono); font-size:9px; color:var(--dim); margin-top:3px; }
+#tel-x     { font-family:var(--mono); font-size:12px; color:rgba(0,242,255,.4); cursor:pointer; padding:2px 5px; transition:color .2s; line-height:1; }
+#tel-x:hover { color:var(--cyan); }
+
+#tel-ph {
+  font-family:var(--mono); font-size:42px; line-height:1; text-align:center; padding:10px 0;
+  color:var(--cyan); text-shadow:0 0 22px rgba(0,242,255,.65);
+  border:1px solid rgba(0,242,255,.12); background:rgba(0,242,255,.03);
+  transition:color .4s,text-shadow .4s;
+}
+.trow { display:flex; justify-content:space-between; align-items:baseline; }
+.tkey { font-family:var(--mono); font-size:9px; color:var(--dim); }
+.tval { font-family:var(--mono); font-size:13px; color:var(--cyan); text-shadow:0 0 7px rgba(0,242,255,.5); }
+.tval.ok     { color:var(--healthy); text-shadow:0 0 7px rgba(0,255,157,.6); }
+.tval.warn   { color:var(--warn);    text-shadow:0 0 7px rgba(255,170,0,.6); }
+.tval.danger { color:var(--danger);  text-shadow:0 0 7px rgba(255,34,68,.7); }
+.tbarwrap { display:flex; flex-direction:column; gap:4px; }
+.tbarbg   { height:2px; background:rgba(255,255,255,.06); border-radius:1px; overflow:hidden; }
+.tbarfill { height:100%; border-radius:1px; transition:width .6s cubic-bezier(.16,1,.3,1),background .6s; }
+
+#tel-foot {
+  font-family:var(--mono); font-size:8px; color:rgba(0,242,255,.28);
+  padding:10px 18px 14px; border-top:1px solid rgba(0,242,255,.07); line-height:1.9; flex-shrink:0;
+}
+
+/* ── Node labels ───────────────────────────────────────────────── */
+.nlabel {
+  position:fixed; pointer-events:none; z-index:30;
+  font-family:var(--mono); font-size:11px; letter-spacing:2px;
+  color:var(--cyan); text-shadow:0 0 10px rgba(0,242,255,.7);
+  transform:translate(-50%,-130%); white-space:nowrap; transition:color .4s;
+}
+.nlabel.warn   { color:var(--warn);   text-shadow:0 0 10px rgba(255,170,0,.7); }
+.nlabel.danger { color:var(--danger); text-shadow:0 0 10px rgba(255,34,68,.7); }
+@keyframes glitch {
+  0%  { clip-path:inset(0 0 92% 0);  transform:translate(-50%,-130%) translate(-2px,0); }
+  15% { clip-path:inset(35% 0 55% 0);transform:translate(-50%,-130%) translate(3px,0); }
+  30% { clip-path:inset(75% 0 10% 0);transform:translate(-50%,-130%) translate(-1px,0); }
+  50%,100% { clip-path:none; transform:translate(-50%,-130%); }
+}
+.nlabel.glitch { animation:glitch .2s steps(1) infinite; }
+
+/* ── Tooltip ───────────────────────────────────────────────────── */
+#tip {
+  position:fixed; z-index:950; pointer-events:none;
+  font-family:var(--mono); font-size:10px; letter-spacing:1.5px;
+  color:var(--cyan); background:rgba(0,4,14,.94);
+  border:1px solid rgba(0,242,255,.28); border-radius:2px;
+  padding:7px 13px; opacity:0; transition:opacity .18s;
+  backdrop-filter:blur(8px); white-space:nowrap;
+}
+#tip.show { opacity:1; }
+</style>
+</head>
+<body>
+
+<canvas id="ocean-bg"></canvas>
+<div id="threejs-wrap"></div>
+<div id="scanlines"></div>
+<div id="vignette"></div>
+
+<!-- HEADER -->
+<div id="hdr">
+  <div>
+    <div class="brand">CORAL SENTINEL <em>// BIOBOX DIGITAL TWIN</em></div>
+    <div class="geo">LAT: 10.5667° N &nbsp;|&nbsp; LONG: 72.6333° E &nbsp;|&nbsp; DEPTH: 6–18 m &nbsp;|&nbsp; Lakshadweep Reef, Arabian Sea</div>
+  </div>
+  <div class="hcluster">
+    <div id="hbwrap">
+      <div id="hblbl">HEARTBEAT<br>MSG/s</div>
+      <canvas id="hbcv" width="120" height="32"></canvas>
+    </div>
+    <div class="hstat">NODES<br><strong id="h-n">4</strong></div>
+    <div class="hstat">AVG pH<br><strong id="h-ph">—</strong></div>
+    <div class="hstat">ALERTS<br><strong id="h-al">0</strong></div>
+    <div class="connrow"><div class="dot off" id="cdot"></div><span id="clbl">CONNECTING</span></div>
+  </div>
+</div>
+
+<!-- BOTTOM -->
+<div id="btm">
+  <div id="logbox"></div>
+</div>
+
+<!-- TELEMETRY TAB -->
+<div id="tel-tab"><div id="tel-btn">TELEMETRY</div></div>
+
+<!-- TELEMETRY PANEL -->
+<div id="tel-panel">
+  <div id="tel-inner">
+    <div id="tel-hdr">
+      <div>
+        <div id="tel-title">TELEMETRY HUD</div>
+        <div id="tel-nid">—</div>
+      </div>
+      <div id="tel-x">✕</div>
+    </div>
+
+    <div id="tel-ph">pH —</div>
+
+    <div class="trow"><span class="tkey">Status</span><span class="tval" id="ts">—</span></div>
+    <div class="trow"><span class="tkey">Risk Score</span><span class="tval" id="trisk">—</span></div>
+
+    <div class="tbarwrap">
+      <div class="trow"><span class="tkey">pH Index</span><span class="tval" id="tphi">—</span></div>
+      <div class="tbarbg"><div class="tbarfill" id="tphb" style="width:0%"></div></div>
+    </div>
+    <div class="tbarwrap">
+      <div class="trow"><span class="tkey">Temp Rolling 7d</span><span class="tval" id="tt7">—</span></div>
+      <div class="tbarbg"><div class="tbarfill" id="ttb" style="width:50%"></div></div>
+    </div>
+    <div class="tbarwrap">
+      <div class="trow"><span class="tkey">CO₂ Rolling 7d</span><span class="tval" id="tc7">—</span></div>
+      <div class="tbarbg"><div class="tbarfill" id="tcb" style="width:30%"></div></div>
+    </div>
+
+    <div class="trow"><span class="tkey">Anomaly Heatwave</span><span class="tval" id="thw">—</span></div>
+    <div class="trow"><span class="tkey">Anomaly Upwelling</span><span class="tval" id="tup">—</span></div>
+    <div class="trow"><span class="tkey">Last Update</span><span class="tval" id="tts" style="font-size:10px">—</span></div>
+  </div>
+  <div id="tel-foot">
+    CORAL SENTINEL // BIOBOX DIGITAL TWIN<br>
+    BUILD: 2026.03 // XGBoost pH Engine v2<br>
+    TEMPORAL CLAMP: ACTIVE [year=0]
+  </div>
+</div>
+
+<div id="tip"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════
+//  CORAL SENTINEL — Biobox Digital Twin v3  (clean rewrite)
+// ═══════════════════════════════════════════════════════════════════
+
+const CFG = {
+  N:4, SPACING:7.5, R:1.8, IR:1.1, DNA:200, DUST:1400,
+  CRIT:7.80, WARN:8.05, GOOD:8.20,
+  ROS:'ws://localhost:9090', TOPIC:'/coral_health/telemetry', HBL:80,
+};
+
+// ── colour helpers ─────────────────────────────────────────────────
+const C = {
+  cyan:   new THREE.Color(0x00f2ff),
+  danger: new THREE.Color(0xff2244),
+  warn:   new THREE.Color(0xffaa00),
+  ok:     new THREE.Color(0x00ff9d),
+  white:  new THREE.Color(0xffffff),
+};
+const phCol = p => p<CFG.CRIT ? C.danger : p<CFG.WARN ? C.warn : C.cyan;
+const phCls = p => p<CFG.CRIT ? 'danger'  : p<CFG.WARN ? 'warn'  : 'ok';
+const phLbl = p => p<CFG.CRIT ? 'CRITICAL': p<CFG.WARN ? 'MODERATE': p<CFG.GOOD?'MILD':'HEALTHY';
+const ge    = id => document.getElementById(id);
+
+// ── renderer ──────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({antialias:true,alpha:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.setClearColor(0,0);
+ge('threejs-wrap').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog   = new THREE.FogExp2(0x000a16,0.016);
+
+const camera = new THREE.PerspectiveCamera(58,innerWidth/innerHeight,.1,500);
+
+// ── orbit (damped) ────────────────────────────────────────────────
+const orb = {drag:false,px:0,py:0, phi:1.57,theta:0,r:22, tp:1.57,tt:0,tr:22};
+const DAMP = 0.09;
+const mouse = new THREE.Vector2();
+
+renderer.domElement.addEventListener('mousedown',e=>{
+  if(e.button) return; orb.drag=true; orb.px=e.clientX; orb.py=e.clientY;
+  renderer.domElement.style.cursor='grabbing';
+});
+window.addEventListener('mouseup',()=>{ orb.drag=false; renderer.domElement.style.cursor='crosshair'; });
+window.addEventListener('mousemove',e=>{
+  mouse.set((e.clientX/innerWidth)*2-1,-(e.clientY/innerHeight)*2+1);
+  ge('tip').style.left=(e.clientX+14)+'px'; ge('tip').style.top=(e.clientY-8)+'px';
+  if(!orb.drag) return;
+  orb.tt -= (e.clientX-orb.px)*0.006;
+  orb.tp  = Math.max(.3,Math.min(Math.PI-.3, orb.tp+(e.clientY-orb.py)*0.006));
+  orb.px=e.clientX; orb.py=e.clientY;
+});
+renderer.domElement.addEventListener('wheel',e=>{
+  e.preventDefault(); orb.tr=Math.max(9,Math.min(52,orb.tr+e.deltaY*0.022));
+},{passive:false});
+
+function tickOrbit(){
+  orb.phi   +=(orb.tp-orb.phi)*DAMP;
+  orb.theta +=(orb.tt-orb.theta)*DAMP;
+  orb.r     +=(orb.tr-orb.r)*DAMP;
+  camera.position.set(
+    orb.r*Math.sin(orb.phi)*Math.sin(orb.theta),
+    orb.r*Math.cos(orb.phi),
+    orb.r*Math.sin(orb.phi)*Math.cos(orb.theta)
+  );
+  camera.lookAt(0,0,0);
+}
+
+// ── lighting ──────────────────────────────────────────────────────
+scene.add(new THREE.AmbientLight(0x002040,3));
+const rim=new THREE.DirectionalLight(0x00c8ff,.7); rim.position.set(-8,10,8); scene.add(rim);
+
+// ── dust ──────────────────────────────────────────────────────────
+(()=>{
+  const geo=new THREE.BufferGeometry();
+  const pos=new Float32Array(CFG.DUST*3), vel=new Float32Array(CFG.DUST*3);
+  for(let i=0;i<CFG.DUST;i++){
+    pos[i*3]=(Math.random()-.5)*80; pos[i*3+1]=(Math.random()-.5)*40; pos[i*3+2]=(Math.random()-.5)*80;
+    vel[i*3]=(Math.random()-.5)*.003; vel[i*3+1]=Math.random()*.004+.001; vel[i*3+2]=(Math.random()-.5)*.003;
+  }
+  geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  const pts=new THREE.Points(geo,new THREE.PointsMaterial({color:0x00b8d4,size:.052,transparent:true,opacity:.36,depthWrite:false}));
+  pts.tick=()=>{
+    const p=geo.attributes.position.array;
+    for(let i=0;i<CFG.DUST;i++){ p[i*3]+=vel[i*3]; p[i*3+1]+=vel[i*3+1]; p[i*3+2]+=vel[i*3+2]; if(p[i*3+1]>20)p[i*3+1]=-20; }
+    geo.attributes.position.needsUpdate=true;
+  };
+  scene.add(pts); scene._dust=pts;
+})();
+
+// ── shaders ───────────────────────────────────────────────────────
+const VERT=`varying vec3 vN,vV,vP;varying vec2 vUv;
+void main(){ vUv=uv;vN=normalize(normalMatrix*normal);vP=position;
+  vec4 mv=modelViewMatrix*vec4(position,1.);vV=normalize(-mv.xyz);gl_Position=projectionMatrix*mv;}`;
+const FRAG=`varying vec3 vN,vV,vP;varying vec2 vUv;
+uniform float time;uniform vec3 base;uniform float dMix;
+float fr(){return pow(1.-max(dot(vN,vV),0.),3.5);}
+float gr(){vec2 g=fract(vUv*10.);return step(.985,g.x)+step(.985,g.y);}
+void main(){
+  float f=fr(),sc=step(.97,fract(vP.y*4.+time*.28)),g=gr()*.22;
+  float pulse=.5+.5*sin(time*2.+vP.y*2.5);
+  vec3 dc=vec3(1.,.13,.27),col=mix(base,dc,dMix);
+  vec3 fc=col*(f*1.6+g+sc*.45+.05)+col*pulse*.055;
+  gl_FragColor=vec4(fc,clamp(f*.88+g*.55+sc*.28+.04,0.,1.));}`;
+
+// ── build nodes ───────────────────────────────────────────────────
+const xOff=((CFG.N-1)*CFG.SPACING)/2;
+const nodes=Array.from({length:CFG.N},(_,i)=>{
+  const ns={id:i+1,ph:null,lastData:null,hov:false,spd:.003,pt:0,group:null,mesh:null,inner:null,ring:null,dna:null,lbl:null};
+  const g=new THREE.Group(); g.position.set(i*CFG.SPACING-xOff,0,0);
+
+  const mat=new THREE.ShaderMaterial({vertexShader:VERT,fragmentShader:FRAG,
+    uniforms:{time:{value:0},base:{value:new THREE.Color(C.cyan)},dMix:{value:0}},
+    transparent:true,depthWrite:false,side:THREE.DoubleSide});
+  ns.mesh=new THREE.Mesh(new THREE.SphereGeometry(CFG.R,64,64),mat); g.add(ns.mesh);
+
+  ns.inner=new THREE.Mesh(new THREE.SphereGeometry(CFG.IR,32,32),
+    new THREE.MeshBasicMaterial({color:C.cyan,transparent:true,opacity:.04,depthWrite:false})); g.add(ns.inner);
+
+  ns.ring=new THREE.Mesh(new THREE.TorusGeometry(CFG.R+.14,.018,8,80),
+    new THREE.MeshBasicMaterial({color:C.cyan,transparent:true,opacity:.3}));
+  ns.ring.rotation.x=Math.PI/2; g.add(ns.ring);
+
+  const dp=new Float32Array(CFG.DNA*3);
+  for(let j=0;j<CFG.DNA;j++){
+    const t=(j/CFG.DNA)*Math.PI*6,r=CFG.IR*.6,s=j%2?-1:1;
+    dp[j*3]=Math.cos(t)*r*s; dp[j*3+1]=(j/CFG.DNA)*(CFG.R*2)-CFG.R; dp[j*3+2]=Math.sin(t)*r;
+  }
+  const dg=new THREE.BufferGeometry(); dg.setAttribute('position',new THREE.BufferAttribute(dp,3));
+  ns.dna=new THREE.Points(dg,new THREE.PointsMaterial({color:C.cyan,size:.04,transparent:true,opacity:.7,depthWrite:false}));
+  g.add(ns.dna);
+
+  scene.add(g); ns.group=g;
+
+  const lbl=document.createElement('div'); lbl.className='nlabel'; lbl.id='lbl'+i;
+  lbl.textContent=`NODE 0${i+1} // pH —`; document.body.appendChild(lbl); ns.lbl=lbl;
+
+  return ns;
+});
+
+// ── pills (inject before logbox) ──────────────────────────────────
+const btm=ge('btm'), logbox=ge('logbox');
+nodes.forEach((ns,i)=>{
+  const p=document.createElement('div'); p.className='pill'; p.id='pill'+i;
+  p.innerHTML=`<div class="pill-id">NODE 0${i+1}</div>
+    <div class="pill-ph" id="pph${i}">—</div>
+    <div class="pill-st" id="pst${i}">AWAITING</div>
+    <div class="pill-bar"><div class="pill-fill" id="pbr${i}" style="width:0%;background:var(--cyan)"></div></div>`;
+  btm.insertBefore(p,logbox);
+});
+
+// ── raycasting ────────────────────────────────────────────────────
+const rc=new THREE.Raycaster(); const tip=ge('tip'); let hov=null;
+function doRay(){
+  rc.setFromCamera(mouse,camera);
+  const hits=rc.intersectObjects(nodes.map(n=>n.mesh));
+  if(hov){hov.hov=false;hov=null;}
+  if(hits.length){
+    const idx=nodes.findIndex(n=>n.mesh===hits[0].object);
+    if(idx>=0){ hov=nodes[idx]; hov.hov=true;
+      tip.textContent=`Node 0${idx+1}  //  pH ${hov.ph!==null?hov.ph.toFixed(3):'—'}`;
+      tip.classList.add('show');
+      openPanel(hov);
+    }
+  } else tip.classList.remove('show');
+}
+
+// ── telemetry panel ───────────────────────────────────────────────
+const panel=ge('tel-panel'), tab=ge('tel-tab');
+let pOpen=false, pNode=null;
+
+function openPanel(ns){ pOpen=true; pNode=ns; panel.classList.add('open'); tab.classList.add('open'); fillPanel(ns); }
+function closePanel(){ pOpen=false; panel.classList.remove('open'); tab.classList.remove('open'); }
+tab.addEventListener('click',()=> pOpen?closePanel():(hov?openPanel(hov):null));
+ge('tel-x').addEventListener('click',closePanel);
+
+function fillPanel(ns){
+  const d=ns.lastData,ph=ns.ph;
+  ge('tel-nid').textContent=`Node 0${ns.id}`;
+  const big=ge('tel-ph');
+  big.textContent=ph!==null?`pH ${ph.toFixed(3)}`:'pH —';
+  big.style.color=ph!==null?(ph<CFG.CRIT?'var(--danger)':ph<CFG.WARN?'var(--warn)':'var(--cyan)'):'';
+  const pc=phCls(ph??9);
+  sv('ts',   d?phLbl(ph):'—', pc);
+  sv('trisk',d?d.prediction?.risk_score??'—':'—', pc);
+  sv('tphi', ph?ph.toFixed(3):'—', pc);
+  sb('tphb', ph?((ph-7)/2)*100:0, pc);
+  const t7=d?.rolling?.temp_7d_mean;
+  sv('tt7',t7!==undefined?t7.toFixed(2)+' °C':'—','ok');
+  sb('ttb',t7!==undefined?((t7+2)/37)*100:0,'ok');
+  const c7=d?.rolling?.co2_7d_mean;
+  sv('tc7',c7!==undefined?c7.toFixed(1)+' ppm':'—',c7>500?'danger':'ok');
+  sb('tcb',c7!==undefined?((c7-200)/600)*100:0,c7>500?'danger':'ok');
+  const hw=d?.anomalies?.is_heatwave, up=d?.anomalies?.is_upwelling;
+  sv('thw',hw?'DETECTED':'NOMINAL',hw?'danger':'ok');
+  sv('tup',up?'DETECTED':'NOMINAL',up?'warn':'ok');
+  ge('tts').textContent=d?.timestamp_utc?d.timestamp_utc.slice(11,19)+' UTC':'—';
+}
+function sv(id,txt,cls){ const e=ge(id); e.textContent=txt; e.className='tval '+cls; }
+function sb(id,pct,cls){
+  const b=ge(id); b.style.width=Math.max(0,Math.min(100,pct))+'%';
+  b.style.background=cls==='danger'?'var(--danger)':cls==='warn'?'var(--warn)':'var(--healthy)';
+}
+
+// ── label projection ──────────────────────────────────────────────
+const pv=new THREE.Vector3();
+function tickLabels(){
+  nodes.forEach((ns,i)=>{
+    pv.setFromMatrixPosition(ns.group.matrixWorld); pv.y+=CFG.R+.7; pv.project(camera);
+    ns.lbl.style.left=((pv.x*.5+.5)*innerWidth)+'px';
+    ns.lbl.style.top =((-pv.y*.5+.5)*innerHeight)+'px';
+    ns.lbl.textContent=`NODE 0${i+1} // pH ${ns.ph!==null?ns.ph.toFixed(2):'—'}`;
+    let c='nlabel';
+    if(ns.ph!==null){ if(ns.ph<CFG.CRIT)c+=' danger glitch'; else if(ns.ph<CFG.WARN)c+=' warn'; }
+    ns.lbl.className=c;
+  });
+}
+
+// ── heartbeat ─────────────────────────────────────────────────────
+const hbCtx=ge('hbcv').getContext('2d');
+const hbD=new Array(CFG.HBL).fill(0); let hbF=0;
+function hbPulse(){ hbD.push(1); if(hbD.length>CFG.HBL)hbD.shift(); hbF=1; }
+function drawHb(){
+  hbCtx.clearRect(0,0,120,32);
+  hbCtx.strokeStyle=`rgba(0,242,255,${.28+hbF*.52})`; hbCtx.lineWidth=1; hbCtx.beginPath();
+  hbD.forEach((v,i)=>{ const x=(i/CFG.HBL)*120,y=16-v*12; i?hbCtx.lineTo(x,y):hbCtx.moveTo(x,y); });
+  hbCtx.stroke();
+  for(let j=0;j<hbD.length;j++)hbD[j]*=.91; hbF*=.87;
+}
+
+// ── log ───────────────────────────────────────────────────────────
+const logLines=[];
+function addLog(t,alert=false){
+  const d=document.createElement('div'); d.className='lline'+(alert?' alert':'');
+  d.textContent=`[${new Date().toISOString().slice(11,19)}] ${t}`;
+  logbox.insertBefore(d,logbox.firstChild); logLines.unshift(d);
+  if(logLines.length>5)logLines.pop().remove();
+}
+
+// ── header stats ──────────────────────────────────────────────────
+function updateStats(){
+  const phs=nodes.map(n=>n.ph).filter(p=>p!==null);
+  const avg=phs.length?phs.reduce((a,b)=>a+b,0)/phs.length:null;
+  const alerts=phs.filter(p=>p<CFG.CRIT).length;
+  ge('h-ph').textContent=avg?avg.toFixed(2):'—';
+  ge('h-al').textContent=alerts;
+  ge('h-al').style.color=alerts>0?'var(--danger)':'var(--healthy)';
+}
+
+// ── update pill ───────────────────────────────────────────────────
+function updatePill(ns){
+  const ph=ns.ph, i=ns.id-1, l=phLbl(ph);
+  ge('pph'+i).textContent=ph.toFixed(2);
+  ge('pph'+i).className=`pill-ph ${ph<CFG.CRIT?'danger':ph<CFG.WARN?'warn':''}`;
+  ge('pst'+i).textContent=l;
+  ge('pbr'+i).style.width=Math.max(0,Math.min(100,((ph-7)/2)*100))+'%';
+  ge('pbr'+i).style.background=ph<CFG.CRIT?'var(--danger)':ph<CFG.WARN?'var(--warn)':'var(--healthy)';
+  ge('pill'+i).className=`pill ${ph<CFG.CRIT?'danger':ph<CFG.WARN?'warn':'active'}`;
+}
+
+// ── ingest (shared by ROS + demo) ─────────────────────────────────
+function ingest(data){
+  const ph=data?.prediction?.ph, nid=data?.node_id;
+  if(ph===undefined||nid===undefined) return;
+  const idx=nid-1; if(idx<0||idx>=CFG.N) return;
+  const ns=nodes[idx]; ns.ph=ph; ns.lastData=data;
+  hbPulse(); updatePill(ns); updateStats();
+  if(pOpen&&pNode===ns) fillPanel(ns);
+  ns.spd=.026; ns.pt=1; setTimeout(()=>ns.spd=.003,1000);
+  addLog(`NODE 0${nid} → pH ${ph.toFixed(3)} [${phLbl(ph)}]`,ph<CFG.CRIT);
+}
+
+// ── ROS ───────────────────────────────────────────────────────────
+let rosOk=false;
+try{
+  const ros=new ROSLIB.Ros({url:CFG.ROS});
+  ros.on('connection',()=>{ rosOk=true; ge('cdot').classList.remove('off'); ge('clbl').textContent='CONNECTED'; addLog('ROS2 bridge connected'); });
+  ros.on('error',()=>{ ge('cdot').classList.add('off'); ge('clbl').textContent='ERROR'; addLog('Bridge error',true); });
+  ros.on('close', ()=>{ rosOk=false; ge('cdot').classList.add('off'); ge('clbl').textContent='OFFLINE'; addLog('Bridge offline',true); });
+  new ROSLIB.Topic({ros,name:CFG.TOPIC,messageType:'std_msgs/String'}).subscribe(msg=>{
+    try{ ingest(JSON.parse(msg.data)); }catch(e){ addLog('Parse err: '+e.message,true); }
+  });
+}catch(e){ addLog('ROS init failed: '+e.message,true); }
+
+// ── demo mode ─────────────────────────────────────────────────────
+(()=>{
+  const phs=[8.25,7.92,7.68,8.32];
+  const clamps=[[8.10,8.45],[7.81,8.04],[7.50,7.79],[8.15,8.45]];
+  let tick=0;
+  function fire(){
+    if(rosOk) return;
+    const i=tick%CFG.N;
+    phs[i]+=(Math.random()-.5)*.006;
+    phs[i]=Math.max(clamps[i][0],Math.min(clamps[i][1],phs[i]));
+    const ph=parseFloat((phs[i]+(Math.random()-.5)*.03).toFixed(4));
+    ingest({node_id:i+1,prediction:{ph,risk_score:ph<7.8?3:ph<8.05?2:0},
+      rolling:{temp_7d_mean:22+Math.random()*2,co2_7d_mean:285+Math.random()*18},
+      anomalies:{is_heatwave:i===1,is_upwelling:i===2},
+      timestamp_utc:new Date().toISOString()});
+    tick++; setTimeout(fire,520+Math.random()*340);
+  }
+  setTimeout(fire,1400);
+})();
+
+// ── ocean background ──────────────────────────────────────────────
+(()=>{
+  const cv=ge('ocean-bg'), cx=cv.getContext('2d');
+  const resize=()=>{ cv.width=innerWidth; cv.height=innerHeight; };
+  resize(); window.addEventListener('resize',resize);
+
+  const WAVES=[
+    {y:.28,amp:32,f:.010,s:.25,col:'#0a3a6e',a:.15},
+    {y:.42,amp:26,f:.016,s:.18,col:'#0b4d82',a:.18},
+    {y:.56,amp:20,f:.022,s:.32,col:'#0e6699',a:.20},
+    {y:.70,amp:15,f:.028,s:.13,col:'#1282a2',a:.22},
+    {y:.83,amp:11,f:.036,s:.39,col:'#17a0b4',a:.25},
+  ];
+  const CAUST=Array.from({length:50},()=>({
+    x:Math.random()*innerWidth, y:Math.random()*innerHeight,
+    rx:3+Math.random()*13, ry:1+Math.random()*5,
+    spd:.09+Math.random()*.21, ph:Math.random()*Math.PI*2, a:.022+Math.random()*.055,
+  }));
+
+  window._ocean=t=>{
+    const W=cv.width,H=cv.height;
+    // depth gradient
+    const gr=cx.createLinearGradient(0,0,0,H);
+    gr.addColorStop(0,'#00030c'); gr.addColorStop(.18,'#000718');
+    gr.addColorStop(.40,'#00112e'); gr.addColorStop(.62,'#002254');
+    gr.addColorStop(.80,'#003870'); gr.addColorStop(.93,'#005280');
+    gr.addColorStop(1,'#006882');
+    cx.fillStyle=gr; cx.fillRect(0,0,W,H);
+
+    // waves
+    WAVES.forEach(w=>{
+      const by=H*w.y; cx.beginPath(); cx.moveTo(0,H);
+      for(let x=0;x<=W;x+=3){
+        const y=by+Math.sin(x*w.f+t*w.s)*w.amp+Math.sin(x*w.f*1.62+t*w.s*.56+1.2)*(w.amp*.3);
+        cx.lineTo(x,y);
+      }
+      cx.lineTo(W,H); cx.closePath();
+      const wg=cx.createLinearGradient(0,by-w.amp,0,by+w.amp*2.4);
+      const ha=Math.round(w.a*255).toString(16).padStart(2,'0');
+      wg.addColorStop(0,w.col+ha); wg.addColorStop(1,w.col+'00');
+      cx.fillStyle=wg; cx.fill();
+    });
+
+    // caustics
+    CAUST.forEach(c=>{
+      c.y-=c.spd; c.x+=Math.sin(t*.37+c.ph)*.28;
+      if(c.y<-20){c.y=H+10;c.x=Math.random()*W;}
+      const sg=cx.createRadialGradient(c.x,c.y,0,c.x,c.y,c.rx);
+      sg.addColorStop(0,`rgba(65,210,255,${c.a})`); sg.addColorStop(1,'rgba(65,210,255,0)');
+      cx.save(); cx.scale(1,c.ry/c.rx);
+      cx.beginPath(); cx.arc(c.x,c.y*(c.rx/c.ry),c.rx,0,Math.PI*2);
+      cx.fillStyle=sg; cx.fill(); cx.restore();
+    });
+
+    // header/footer vignettes
+    const hg=cx.createLinearGradient(0,0,0,80);
+    hg.addColorStop(0,'rgba(0,2,8,.78)'); hg.addColorStop(1,'rgba(0,2,8,0)');
+    cx.fillStyle=hg; cx.fillRect(0,0,W,80);
+    const fg=cx.createLinearGradient(0,H-115,0,H);
+    fg.addColorStop(0,'rgba(0,2,8,0)'); fg.addColorStop(1,'rgba(0,2,8,.82)');
+    cx.fillStyle=fg; cx.fillRect(0,H-115,W,115);
+  };
+})();
+
+// ── animation loop ────────────────────────────────────────────────
+const clock=new THREE.Clock();
+function animate(){
+  requestAnimationFrame(animate);
+  const t=clock.getElapsedTime();
+  TWEEN.update();
+  if(window._ocean)window._ocean(t);
+  tickOrbit(); doRay(); tickLabels(); drawHb(); scene._dust.tick();
+
+  nodes.forEach((ns,i)=>{
+    const col=ns.hov?C.white:phCol(ns.ph??9);
+    const dm=ns.ph!==null&&ns.ph<CFG.CRIT?1:0;
+    const u=ns.mesh.material.uniforms;
+    u.time.value=t;
+    u.base.value.lerp(col,.07);
+    u.dMix.value+=(dm-u.dMix.value)*.06;
+    ns.dna.material.color.lerp(col,.06);
+    ns.inner.material.color.lerp(col,.06);
+    ns.ring.material.color.lerp(col,.06);
+    ns.inner.material.opacity=ns.hov?.13:.04;
+    const spd=ns.spd+(ns.pt>0?ns.pt*.036:0);
+    ns.group.rotation.y+=spd; ns.dna.rotation.y-=spd*1.22;
+    ns.pt*=.91;
+    ns.group.scale.setScalar(1+Math.sin(t*1.1+i*1.4)*.011);
+  });
+
+  renderer.render(scene,camera);
+}
+animate();
+
+// ── resize ────────────────────────────────────────────────────────
+window.addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+
+addLog('BIOBOX DIGITAL TWIN v3 initialised');
+addLog('Awaiting ROS2 bridge @ '+CFG.ROS);
+</script>
+</body>
+</html>
